@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: oracle
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+      POSTGRES_DB: oracle
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U oracle"], interval: 5s, timeout: 3s, retries: 10}
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis-data:/data"]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 10}
+  api:
+    build: .
+    env_file: .env
+    ports: ["8000:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env
+    depends_on:
+      postgres: {condition: service_healthy}
+  worker:
+    build: .
+    command: ["celery", "-A", "oracle_worker.celery_app:app", "worker", "--loglevel=INFO"]
+    env_file: .env
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+  scheduler:
+    build: .
+    command: ["celery", "-A", "oracle_worker.celery_app:app", "beat", "--loglevel=INFO"]
+    env_file: .env
+    depends_on:
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+  dashboard:
+    build: apps/dashboard
+    environment: {NEXT_PUBLIC_ORACLE_API_URL: "http://localhost:8000"}
+    ports: ["3000:3000"]
+    depends_on: [api]
+volumes:
+  postgres-data:
+  redis-data:
