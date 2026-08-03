@@ -123,6 +123,7 @@ class PositionRecord(Base):
     status: Mapped[str] = mapped_column(String(16))
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    realized_pnl: Mapped[Decimal | None] = mapped_column(Numeric(24, 8))
 
 
 class AlertRecord(Base):

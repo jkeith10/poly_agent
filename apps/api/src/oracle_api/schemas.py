@@ -71,3 +71,57 @@ class RecommendationView(ApiModel):
     reasoning: str
     citations: list[str]
     created_at: datetime
+
+
+class PortfolioCreate(ApiModel):
+    name: str = Field(min_length=1, max_length=255)
+    bankroll: Decimal = Field(gt=0)
+
+
+class PortfolioView(ApiModel):
+    id: UUID
+    name: str
+    bankroll: Decimal
+    created_at: datetime
+
+
+class PositionCreate(ApiModel):
+    market_id: UUID
+    side: str = Field(pattern="^(YES|NO)$")
+    quantity: Decimal = Field(gt=0)
+    average_price: Decimal = Field(gt=0, lt=1)
+
+
+class PositionView(ApiModel):
+    id: UUID
+    portfolio_id: UUID
+    market_id: UUID
+    side: str
+    quantity: Decimal
+    average_price: Decimal
+    status: str
+    opened_at: datetime
+    resolved_at: datetime | None
+    realized_pnl: Decimal | None
+
+
+class ResolvePosition(ApiModel):
+    outcome_yes: bool
+
+
+class PortfolioPerformanceView(ApiModel):
+    roi: Decimal
+    win_rate: Decimal
+    maximum_drawdown: Decimal
+    sharpe_ratio: Decimal
+
+
+class MarketResolutionInput(ApiModel):
+    outcome_yes: bool
+
+
+class ForecastEvaluationView(ApiModel):
+    market_id: UUID
+    predictions_evaluated: int
+    mean_brier_score: Decimal
+    mean_log_loss: Decimal

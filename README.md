@@ -15,7 +15,7 @@ docs/          Architecture decisions and operational documentation
 scripts/       Repository automation entry points
 ```
 
-The repository contains a runnable vertical slice: live Polymarket discovery, structured evidence inputs, Bayesian updating with dependence discounts, cost-aware expected-value recommendations, portfolio and calibration metrics, alert policy, persistence models, background ingestion, and the dashboard.
+The repository contains a runnable vertical slice: live Polymarket discovery, symmetric source research, structured AI debate, Bayesian updating with dependence discounts, cost-aware expected-value recommendations, persistent portfolios and resolutions, calibration scoring, notification adapters, background ingestion, and a live dashboard.
 
 ## Run locally
 
@@ -28,6 +28,8 @@ docker compose up --build
 The dashboard is served at `http://localhost:3000`, the API at `http://localhost:8000`, and interactive API documentation at `http://localhost:8000/docs`.
 
 Set `ORACLE_ADMIN_API_KEYS` to a JSON list of high-entropy bearer tokens before exposing the API. Production configuration refuses to start without at least one administrative key. Market scans and analysis creation require this credential; read-only market and recommendation endpoints remain separately cacheable.
+
+AI research remains disabled unless `ORACLE_AI_API_KEY`, `ORACLE_AI_MODEL`, and `ORACLE_SEARCH_API_KEY` are all configured. Research retrieves both sides independently, rejects private-network source URLs, validates structured model output, and persists cited findings.
 
 ## Safety model
 

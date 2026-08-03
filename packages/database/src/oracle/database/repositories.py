@@ -10,11 +10,19 @@ from sqlalchemy.orm import aliased
 
 from oracle.common.models import Market
 from oracle.database.models import (
+    EvidenceRecord,
+    HistoricalResultRecord,
     MarketPriceRecord,
     MarketRecord,
     PredictionRecord,
+    PortfolioRecord,
+    PositionRecord,
     RecommendationRecord,
+    ResearchRecord,
+    SourceRecord,
 )
+from oracle.learning import evaluate_forecast
+from oracle.research.models import ResearchBrief
 
 
 class MarketRepository:
@@ -221,3 +229,165 @@ class AnalysisRepository:
             }
             for prediction, recommendation, question in rows
         ]
+
+
+class PortfolioRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(self, *, name: str, bankroll: Decimal) -> PortfolioRecord:
+        record = PortfolioRecord(
+            name=name, bankroll=bankroll, created_at=datetime.now(UTC)
+        )
+        self.session.add(record)
+        await self.session.flush()
+        return record
+
+    async def list(self) -> list[PortfolioRecord]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(PortfolioRecord).order_by(PortfolioRecord.created_at)
+                )
+            ).all()
+        )
+
+    async def add_position(
+        self,
+        *,
+        portfolio_id: UUID,
+        market_id: UUID,
+        side: str,
+        quantity: Decimal,
+        average_price: Decimal,
+    ) -> PositionRecord:
+        if await self.session.get(PortfolioRecord, portfolio_id) is None:
+            raise LookupError("portfolio not found")
+        if await self.session.get(MarketRecord, market_id) is None:
+            raise LookupError("market not found")
+        record = PositionRecord(
+            portfolio_id=portfolio_id,
+            market_id=market_id,
+            side=side,
+            quantity=quantity,
+            average_price=average_price,
+            status="OPEN",
+            opened_at=datetime.now(UTC),
+            resolved_at=None,
+            realized_pnl=None,
+        )
+        self.session.add(record)
+        await self.session.flush()
+        return record
+
+    async def positions(self, portfolio_id: UUID) -> list[PositionRecord]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(PositionRecord)
+                    .where(PositionRecord.portfolio_id == portfolio_id)
+                    .order_by(PositionRecord.opened_at)
+                )
+            ).all()
+        )
+
+    async def resolve_position(
+        self, position_id: UUID, *, outcome_yes: bool
+    ) -> PositionRecord:
+        record = await self.session.get(PositionRecord, position_id)
+        if record is None:
+            raise LookupError("position not found")
+        if record.status != "OPEN":
+            raise ValueError("position is already resolved")
+        won = (record.side == "YES") == outcome_yes
+        payout = record.quantity if won else Decimal(0)
+        cost = record.quantity * record.average_price
+        record.realized_pnl = payout - cost
+        record.status = "RESOLVED"
+        record.resolved_at = datetime.now(UTC)
+        return record
+
+
+class LearningRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def evaluate_resolution(
+        self, market_id: UUID, *, outcome_yes: bool
+    ) -> tuple[int, Decimal, Decimal]:
+        predictions = list(
+            (
+                await self.session.scalars(
+                    select(PredictionRecord).where(PredictionRecord.market_id == market_id)
+                )
+            ).all()
+        )
+        if not predictions:
+            raise LookupError("no predictions found for market")
+        scores = [evaluate_forecast(float(item.posterior), outcome_yes) for item in predictions]
+        mean_brier = Decimal(str(sum(item.brier for item in scores) / len(scores)))
+        mean_log_loss = Decimal(str(sum(item.log_loss for item in scores) / len(scores)))
+        existing = await self.session.scalar(
+            select(HistoricalResultRecord).where(
+                HistoricalResultRecord.market_id == market_id
+            )
+        )
+        if existing is None:
+            existing = HistoricalResultRecord(
+                market_id=market_id,
+                outcome=outcome_yes,
+                brier_score=mean_brier,
+                log_loss=mean_log_loss,
+                resolved_at=datetime.now(UTC),
+            )
+            self.session.add(existing)
+        else:
+            existing.outcome = outcome_yes
+            existing.brier_score = mean_brier
+            existing.log_loss = mean_log_loss
+            existing.resolved_at = datetime.now(UTC)
+        return len(scores), mean_brier, mean_log_loss
+
+
+class ResearchRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def save(self, brief: ResearchBrief) -> UUID:
+        run = ResearchRecord(
+            market_id=brief.market_id,
+            status="COMPLETED",
+            started_at=brief.researched_at,
+            completed_at=brief.researched_at,
+        )
+        self.session.add(run)
+        await self.session.flush()
+        for finding in brief.yes_evidence + brief.no_evidence:
+            url = str(finding.source_url)
+            source = await self.session.scalar(
+                select(SourceRecord).where(SourceRecord.url == url)
+            )
+            if source is None:
+                source = SourceRecord(
+                    url=url,
+                    publisher=finding.source_url.host or "unknown",
+                    historical_accuracy=None,
+                )
+                self.session.add(source)
+                await self.session.flush()
+            quality = Decimal(str(finding.source_quality))
+            self.session.add(
+                EvidenceRecord(
+                    research_id=run.id,
+                    source_id=source.id,
+                    claim=finding.claim,
+                    citation=finding.citation,
+                    supports_yes=finding.supports_yes,
+                    reliability=quality,
+                    freshness=Decimal("0.5") if finding.published_at is None else Decimal("1"),
+                    importance=quality,
+                    independence_group=url,
+                    observed_at=brief.researched_at,
+                )
+            )
+        return run.id
